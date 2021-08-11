@@ -393,7 +393,7 @@ class SstProcessor(DataProcessor):
 
   def get_labels(self):
     """See base class."""
-    return ["negative", "neutral", "positive"]
+    return ["negative", "mixed", "neutral", "positive"]
 
   def _create_examples(self, lines, set_type):
     """Creates examples for the training and dev sets."""
@@ -880,7 +880,6 @@ def main(_):
   num_warmup_steps = None
   if FLAGS.do_train:
     train_examples = processor.get_train_examples(FLAGS.data_dir)
-    print(train_examples)
     num_train_steps = int(
         len(train_examples) / FLAGS.train_batch_size * FLAGS.num_train_epochs)
     num_warmup_steps = int(num_train_steps * FLAGS.warmup_proportion)
