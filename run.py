@@ -12,10 +12,12 @@ def main(args):
         print(dataset)
         print(args.model)
         subprocess.run("python run_classifier.py \
+        --use_tpu=false \
         --task_name=SST \
         --do_train=true \
-        --do_eval=true \
+        --do_eval=false \
         --do_predict=true \
+        --do_lower_case=false \
         --data_dir={data_dir}/ \
         --vocab_file={bert_dir}/vocab.txt \
         --bert_config_file={bert_dir}/bert_config.json \

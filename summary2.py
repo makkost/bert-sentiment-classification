@@ -1,21 +1,12 @@
 import sys
 import os
+import re
 import numpy as np
 from functools import reduce
-from sklearn.metrics import precision_recall_fscore_support
+from sklearn.metrics import precision_recall_fscore_support, classification_report
 from parse_args import parse_arguments
 
-LABELS = ["negative", "mixed", "neutral", "positive"]
-
-def get_prediction(predictions):
-    if max(predictions) == predictions[0]:
-        return 'neutral'    
-    elif max(predictions) == predictions[1]:
-        return 'negative'
-    elif max(predictions) == predictions[2]:
-        return 'positive'
-    elif max(predictions) == predictions[3]:
-        return 'mixed'
+LABELS = ['0', '2', '1', '3']
 
 def summarize(args):
     totals = []
@@ -23,12 +14,10 @@ def summarize(args):
     for i in range(0, split):
         dataset = "{}/set{}".format(*args.path, i)
         data = []
-        with open("{}/test.tsv".format(dataset), encoding = 'utf-8', mode = 'r') as f:
-            data = [{"label": line.strip().split("\t")[1]} for line in f.readlines()[1:]]
-
         with open("{}/output/test_results.tsv".format(dataset), encoding = 'utf-8', mode = 'r') as f:
             for num, line in enumerate(f.readlines(), start=0):
-                data[num]["prediction"] = get_prediction(line.strip().split("\t"))
+                sent, pred = line.strip().split("\t")
+                data.append({"label": sent, "prediction": pred})
 
         y_true = np.array([entry["label"] for entry in data])
         y_pred = np.array([entry["prediction"] for entry in data])
@@ -47,7 +36,7 @@ def summarize(args):
                      "macro": macro[:-1],
                      "weighted": weighted[:-1]}
             totals.append(total)
-    
+
     with open("{}/total_summary.txt".format(*args.path), encoding = 'utf-8', mode = 'w') as f:
         f.write("             precision    recall   f1-score   support\n")
         labeled = np.array(reduce(np.add, [sub["labeled"] for sub in totals])) / split

@@ -21,6 +21,7 @@ from __future__ import print_function
 import collections
 import csv
 import os
+import sys
 import modeling
 import optimization
 import tokenization
@@ -373,7 +374,7 @@ class ColaProcessor(DataProcessor):
           InputExample(guid=guid, text_a=text_a, text_b=None, label=label))
     return examples
 
-class SstProcessor(DataProcessor):
+class SingleLabelProcessor(DataProcessor):
   """Processor for the SST data set"""
 
   def get_train_examples(self, data_dir):
@@ -393,7 +394,7 @@ class SstProcessor(DataProcessor):
 
   def get_labels(self):
     """See base class."""
-    return ["negative", "neutral", "positive"]
+    return ["neutral", "positive", "negative", "mixed"]
 
   def _create_examples(self, lines, set_type):
     """Creates examples for the training and dev sets."""
@@ -405,10 +406,56 @@ class SstProcessor(DataProcessor):
       guid = "%s-%s" % (set_type, i)
       if set_type == "test":
         text_a = tokenization.convert_to_unicode(line[0])
-        label = "neutral"
       else:
         text_a = tokenization.convert_to_unicode(line[0])
-        label = tokenization.convert_to_unicode(line[1])
+      label = tokenization.convert_to_unicode(line[1])
+      examples.append(
+          InputExample(guid=guid, text_a=text_a, text_b=None, label=label))
+    return examples
+
+class MultiLabelProcessor(DataProcessor):
+  """Processor for the SST data set"""
+
+  def get_train_examples(self, data_dir):
+    """See base class."""
+    return self._create_examples(
+        self._read_tsv(os.path.join(data_dir, "train.tsv")), "train")
+
+  def get_dev_examples(self, data_dir):
+    """See base class."""
+    return self._create_examples(
+        self._read_tsv(os.path.join(data_dir, "dev.tsv")), "dev")
+
+  def get_test_examples(self, data_dir):
+    """See base class."""
+    return self._create_examples(
+        self._read_tsv(os.path.join(data_dir, "test.tsv")), "test")
+
+  def get_labels(self):
+    """See base class."""
+    return [0, 1, 2, 3]
+
+  def _create_examples(self, lines, set_type):
+    """Creates examples for the training and dev sets."""
+    examples = []
+    for (i, line) in enumerate(lines):
+      # Only the test set has a header
+      if i == 0:
+        continue
+      guid = "%s-%s" % (set_type, i)
+      if set_type == "test":
+        text_a = tokenization.convert_to_unicode(line[0])
+      else:
+        text_a = tokenization.convert_to_unicode(line[0])
+      label = tokenization.convert_to_unicode(line[1])
+      if label == "neutral":
+        label = 0
+      elif label == "positive":
+        label = 1
+      elif label == "negative":
+        label = 2
+      elif label == "mixed":
+        label = 3
       examples.append(
           InputExample(guid=guid, text_a=text_a, text_b=None, label=label))
     return examples
@@ -611,7 +658,7 @@ def _truncate_seq_pair(tokens_a, tokens_b, max_length):
 
 
 def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
-                 labels, num_labels, use_one_hot_embeddings):
+                 labels, num_labels, use_one_hot_embeddings, batch_size):
   """Creates a classification model."""
   model = modeling.BertModel(
       config=bert_config,
@@ -626,31 +673,80 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
   #
   # If you want to use the token-level output, use model.get_sequence_output()
   # instead.
-  output_layer = model.get_pooled_output()
+  output_layer = model.get_sequence_output()
 
   hidden_size = output_layer.shape[-1].value
 
-  output_weights = tf.get_variable(
-      "output_weights", [num_labels, hidden_size],
-      initializer=tf.truncated_normal_initializer(stddev=0.02))
+  output_weights_p = tf.get_variable(
+      "output_weights_p", [hidden_size, hidden_size],
+      initializer=tf.truncated_normal_initializer(stddev=0.01), trainable=True)
+  output_bias_p = tf.get_variable(
+      "output_bias_p", [hidden_size], initializer=tf.truncated_normal_initializer(stddev=0.01), trainable=True)
+  w_p = tf.get_variable(
+      "w_p", [1, hidden_size], initializer=tf.truncated_normal_initializer(stddev=0.01), trainable=True) 
 
-  output_bias = tf.get_variable(
-      "output_bias", [num_labels], initializer=tf.zeros_initializer())
+  output_weights_n = tf.get_variable(
+      "output_weights_n", [hidden_size, hidden_size],
+      initializer=tf.truncated_normal_initializer(stddev=0.01), trainable=True)
+  output_bias_n = tf.get_variable(
+      "output_bias_n", [hidden_size], initializer=tf.truncated_normal_initializer(stddev=0.01), trainable=True)
+  w_n = tf.get_variable(
+      "w_n", [1, hidden_size], initializer=tf.truncated_normal_initializer(stddev=0.01), trainable=True) 
+
+  W_s_p = tf.get_variable(
+      "W_s_p", [1, hidden_size], initializer=tf.truncated_normal_initializer(stddev=0.01), trainable=True)
+  b_s_p = tf.get_variable(
+      "b_s_p", [1], initializer=tf.truncated_normal_initializer(stddev=0.01), trainable=True)
+  W_s_n = tf.get_variable(
+      "W_s_n", [1, hidden_size], initializer=tf.truncated_normal_initializer(stddev=0.01), trainable=True)
+  b_s_n = tf.get_variable(
+      "b_s_n", [1], initializer=tf.truncated_normal_initializer(stddev=0.01), trainable=True)  
+
+  identity = tf.eye(128)
+
+  input_mask = tf.cast(input_mask, dtype=tf.float32)
 
   with tf.variable_scope("loss"):
     if is_training:
       # I.e., 0.1 dropout
       output_layer = tf.nn.dropout(output_layer, keep_prob=0.9)
 
-    logits = tf.matmul(output_layer, output_weights, transpose_b=True)
-    logits = tf.nn.bias_add(logits, output_bias)
-    probabilities = tf.nn.softmax(logits, axis=-1)
-    log_probs = tf.nn.log_softmax(logits, axis=-1)
+    output_layer_t = tf.transpose(output_layer, perm=[1, 0, 2])
+    leng = 128
 
-    one_hot_labels = tf.one_hot(labels, depth=num_labels, dtype=tf.float32)
+    M_p = tf.tanh(tf.add(tf.matmul(output_layer_t, output_weights_p, transpose_b=True), output_bias_p))
+    M_p = tf.squeeze(tf.matmul(M_p, w_p, transpose_b=True), axis=2)
+    M_p = tf.transpose(M_p)
+    # M_p = tf.add(M_p, input_mask)
+    weights_p = tf.expand_dims(tf.nn.softmax(M_p, axis=1), axis=1)
+    r_p = tf.squeeze(tf.matmul(weights_p, tf.transpose(output_layer_t, perm=[1, 0, 2])), axis=1)
 
-    per_example_loss = -tf.reduce_sum(one_hot_labels * log_probs, axis=-1)
-    loss = tf.reduce_mean(per_example_loss)
+    M_n = tf.tanh(tf.add(tf.matmul(output_layer_t, output_weights_n, transpose_b=True), output_bias_n))
+    M_n = tf.squeeze(tf.matmul(M_n, w_n, transpose_b=True), axis=2)
+    M_n = tf.transpose(M_n)
+    # M_n = tf.add(M_n, input_mask)
+    weights_n = tf.expand_dims(tf.nn.softmax(M_n, axis=1), axis=1)
+    r_n = tf.squeeze(tf.matmul(weights_n, tf.transpose(output_layer_t, perm=[1, 0, 2])), axis=1)
+
+    orthogonal = tf.concat((weights_p, weights_n), axis=1)
+    orthogonal = tf.matmul(tf.transpose(orthogonal, perm=[0, 2, 1]), orthogonal)
+    tmp = identity[:leng, :leng]
+    tmp_e = tf.expand_dims(tmp, axis=0)
+    orthogonal = orthogonal - tf.tile(tmp_e, (tf.shape(orthogonal)[0], 1, 1))
+    o_loss = tf.norm(orthogonal) / leng
+
+    logits_p = tf.add(tf.matmul(r_p, W_s_p, transpose_b=True), b_s_p)
+    logits_n = tf.add(tf.matmul(r_n, W_s_n, transpose_b=True), b_s_n)
+    logits = tf.concat((logits_p, logits_n), axis=1)
+
+    l = tf.squeeze(labels)
+    multi_hot_labels = tf.mod(tf.bitwise.right_shift(tf.expand_dims(l,1), tf.range(2)), 2)
+    multi_hot_labels = tf.reverse(multi_hot_labels, axis=[-1])
+    multi_hot_labels = tf.cast(multi_hot_labels, dtype=tf.float32)
+
+    per_example_loss = tf.nn.sigmoid_cross_entropy_with_logits(logits=logits, labels=multi_hot_labels)
+    loss = tf.reduce_mean(per_example_loss) + 1 * o_loss
+    probabilities = tf.sigmoid(logits)
 
     return (loss, per_example_loss, logits, probabilities)
 
@@ -681,7 +777,7 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
 
     (total_loss, per_example_loss, logits, probabilities) = create_model(
         bert_config, is_training, input_ids, input_mask, segment_ids, label_ids,
-        num_labels, use_one_hot_embeddings)
+        num_labels, use_one_hot_embeddings, params["batch_size"])
 
     tvars = tf.trainable_variables()
     initialized_variable_names = {}
@@ -827,7 +923,7 @@ def main(_):
       "mnli": MnliProcessor,
       "mrpc": MrpcProcessor,
       "xnli": XnliProcessor,
-      "sst": SstProcessor,
+      "sst": MultiLabelProcessor,
   }
 
   tokenization.validate_case_matches_checkpoint(FLAGS.do_lower_case,
@@ -919,7 +1015,13 @@ def main(_):
         is_training=True,
         drop_remainder=True)
     estimator.train(input_fn=train_input_fn, max_steps=num_train_steps)
-
+    # print(result.get_variable_names())
+    # for (i, prediction) in enumerate(result):
+    #     probabilities = prediction["probabilities"]
+    #     output_line = "\t".join(
+    #         str(class_probability)
+    #         for class_probability in probabilities) + "\n"
+    #     print(output_line)
   if FLAGS.do_eval:
     eval_examples = processor.get_dev_examples(FLAGS.data_dir)
     num_actual_eval_examples = len(eval_examples)
@@ -1001,13 +1103,21 @@ def main(_):
     with tf.gfile.GFile(output_predict_file, "w") as writer:
       num_written_lines = 0
       tf.logging.info("***** Predict results *****")
-      for (i, prediction) in enumerate(result):
+      for i, (prediction, example) in enumerate(zip(result, predict_examples)):
         probabilities = prediction["probabilities"]
+        label = example.label
+        pred = None
+        if probabilities[0] > 0.5 and probabilities[1] > 0.5:
+          pred = 3
+        elif probabilities[0] > 0.5:
+          pred = 2
+        elif probabilities[1] > 0.5:
+          pred = 1
+        else:
+          pred = 0
         if i >= num_actual_predict_examples:
           break
-        output_line = "\t".join(
-            str(class_probability)
-            for class_probability in probabilities) + "\n"
+        output_line = "\t".join([str(label), str(pred)]) + "\n"
         writer.write(output_line)
         num_written_lines += 1
     assert num_written_lines == num_actual_predict_examples

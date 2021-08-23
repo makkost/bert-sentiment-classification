@@ -23,20 +23,24 @@ def split_data(lst, number_of_parts):
         list_copy = list_copy[len(list_copy) // i:]
         yield part
 
-def load_corpora(args):
-    split = args.split
-    output = args.output
-    texts = list()
-    for corpora_file in args.path:
-        with open(corpora_file, encoding = 'utf-8', mode = 'r') as f:
-            texts.extend(json.load(f))
-            
-    sentences = reduce(add, [text['sentences'] for text in texts], [])
-    
-    positive = [(sentence['sentence'], mark_to_polarity(sentence['mark'])) for sentence in sentences if sentence['mark'] == "positive"]
-    negative = [(sentence['sentence'], mark_to_polarity(sentence['mark'])) for sentence in sentences if sentence['mark'] == "negative"]
-    objective = [(sentence['sentence'], mark_to_polarity(sentence['mark'])) for sentence in sentences if sentence['mark'] == "objective"]
-    mixed = [(sentence['sentence'], mark_to_polarity(sentence['mark'])) for sentence in sentences if sentence['mark'] == "mixed"]
+def load_corpora():
+    split = 4
+    output = "data"
+    positive = []
+    negative = []
+    objective = []
+    mixed = []
+    with open("ru_dataset_4/mixed 105.csv", encoding = 'utf-8', mode = 'r') as f:
+        mixed = [(sentence, "mixed") for sentence in f.readlines()]
+
+    with open("ru_dataset_4/negative 1065.csv", encoding = 'utf-8', mode = 'r') as f:
+        negative = [(sentence, "negative") for sentence in f.readlines()]
+
+    with open("ru_dataset_4/neutral 51.csv", encoding = 'utf-8', mode = 'r') as f:
+        objective = [(sentence, "neutral") for sentence in f.readlines()]
+
+    with open("ru_dataset_4/positive 1065.csv", encoding = 'utf-8', mode = 'r') as f:
+        positive = [(sentence, "positive") for sentence in f.readlines()]
 
     positive_chunks = list(split_data(positive, split))
     negative_chunks = list(split_data(negative, split))
@@ -67,5 +71,4 @@ def load_corpora(args):
                  f.write("{}\t{}\n".format(phrase.strip(), label))
 
 if __name__ == '__main__':
-    arguments = parse_arguments()
-    sys.exit(load_corpora(arguments))
+    sys.exit(load_corpora())
