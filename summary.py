@@ -5,17 +5,17 @@ from functools import reduce
 from sklearn.metrics import precision_recall_fscore_support
 from parse_args import parse_arguments
 
-LABELS = ["negative", "mixed", "neutral", "positive"]
+LABELS = ["negative", "neutral", "positive", "mixed"]
 
 def get_prediction(predictions):
     if max(predictions) == predictions[0]:
         return 'negative'    
-    #elif max(predictions) == predictions[1]:
-    #    return 'mixed'
     elif max(predictions) == predictions[1]:
         return 'neutral'
     elif max(predictions) == predictions[2]:
         return 'positive'
+    elif max(predictions) == predictions[3]:
+        return 'mixed'
 
 def summarize(args):
     totals = []
